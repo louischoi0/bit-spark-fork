@@ -27,9 +27,13 @@
 (def coll "bitts") 
 (def db (make-db-connection db-name ))
 
-(defn load-ts
+(defn load-sym-ts
   [ sym tick ] 
     (mc/find-maps db coll {:code sym :unit tick}))
+
+(defn load-ts
+  [ tick ]
+    (mc/find-maps db coll {:unit tick}))
 
 (defn conv-ts-map-to-tuple
   [ ts ]

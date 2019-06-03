@@ -8,10 +8,8 @@
                  [yieldbot/flambo "0.8.0"]]
 
   ;had to be done
-  :aot [flambo-plygrnd.core]
+  :aot [flambo-plygrnd.core] 
   :main flambo-plygrnd.core
-  :injections [ (require '[flambo.conf :as conf])
-                (require '[flambo.api :as f]) ]
 
   :profiles {:provided
              {:dependencies
@@ -25,3 +23,8 @@
                [com.novemberain/monger "3.1.0"]
                [mysql/mysql-connector-java "5.1.6"]]}}
   )
+
+
+;  :injections [ (require '[flambo.conf :as conf])
+;                (require '[flambo.api :as f]) ]
+
