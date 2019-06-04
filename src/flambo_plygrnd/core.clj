@@ -7,58 +7,12 @@
 
             [flambo-plygrnd.functions :as ff]
             [flambo-plygrnd.sqlexecutor :as se]
-            [flambo-plygrnd.utils :as u]
+            [flambo-plygrnd.utils :as u :refer :all]
 
             [clj-time.coerce :as c]
             [clj-time.core :as t]
 
             [clojure.string :as s]))
-  
-(defn bit-code-to-surfix
-  [ code ]
-    (cond 
-      (= code "BTC") 100
-      (= code "XRP") 101
-      (= code "EOS") 102
-      (= code "BSV") 103
-      (= code "BCH") 104
-      (= code "ETH") 105
-      (= code "BTT") 106
-      (= code "COSM") 107
-      (= code "BTG") 108
-      (= code "ADA") 109
-      (= code "ATOM") 110
-      (= code "TRX") 111
-      (= code "NPXS") 112
-      :else -1))
-
-(defn surfix-to-bit-code 
-  [ surfix ]
-    (cond  
-      (= surfix 100) "BTC"
-      (= surfix 101) "XRP"
-      (= surfix 102) "EOS"
-      (= surfix 103) "BSV"
-      (= surfix 104) "BCH"
-      (= surfix 105) "ETH"
-      (= surfix 106) "BTT"
-      (= surfix 107) "COSM"
-      (= surfix 108) "BTG"
-      (= surfix 109) "ADA"
-      (= surfix 110) "ATOM"
-      (= surfix 111) "TRX"
-      (= surfix 112) "NPXS"
-      :else -1))
-
-(defn get-tenth-count
-  [ number ]
-    (let [ n (atom number) 
-           cnt (atom 0) ] 
-      (while (> @n 10)
-        (do
-          (reset! n (/ @n 10)) 
-          (reset! cnt (+ @cnt 1))))
-      (inc @cnt)))
 
 (defn ts-to-pair-rdd 
   [ sc ts ]
@@ -86,6 +40,12 @@
         (+ tsp)
         long))
 
+(defn codify-opstamp
+  [ tsp sym ]
+    (-> sym
+        bit-code-to-surfix
+        (add-code-num-to-timestamp tsp)))
+
 (defn round-timestamp
   [ tsp minutes ]
     (int (/ tsp (* minutes 60 1000))))
@@ -94,7 +54,7 @@
   [ rdd minutes ]  
     (let [ ms-unit (* minutes 60 1000) ]
       (-> rdd
-          (f/map (f/fn [x] (ft/tuple (round-timestamp (._1 x)) (._2 x)))))))
+          (f/map (f/fn [x] (ft/tuple (round-timestamp (._1 x) minutes ) (._2 x)))))))
 
 (defn map-to-key
   [ rdd ff ]
@@ -159,7 +119,6 @@
 
       (map (fn [x y] (ft/tuple x y)) tsp-ts net-ts)))
 
-
 (defn load-ts-all-rdd 
   [ ts agg-min ]
     (let [ ts-added-sym   (->> ts
@@ -193,31 +152,134 @@
            (map net today)
            (map (fn [x y] (ft/tuple x y)) (take-rhead stamps)))))
 
-(defn load-ts-net
+(defn extract-to-tuple-rdd
+  [ ts ]
+    (-> ts
+        (f/map-to-pair (f/fn [x] (ft/tuple (:code x) (ft/tuple (:timestamp x) (:tradePrice x)))))))
+
+(defn into-ts-net
   [ ts ]
     (-> ts 
-        (nmap (fn [x] (ft/tuple (:code x) {:timestamp (:timestamp x) :tradePrice (:tradePrice x) })))
-        ts-to-pair-rdd-with-sc     
         f/group-by-key
         (f/map-to-pair (f/fn [x] (->> x (._2) (sort-by :timestamp) net-from-sorted-dict (ft/tuple (._1 x)))))))
+
+(defn unpack-ts-net 
+  [ ts ]
+    (-> ts
+        (f/map-to-pair (f/fn [x] (let [ tsp  (-> x ft2 (nmap ft1) ) price (-> x ft2 (nmap ft2)) ] (map (fn [x y] (ft/tuple x y) ) tsp price))))))
 
 (defn agg-ts-net
   [ ts-net-rdd min-agg ]
     (-> ts-net-rdd
         (f/reduce-by-key (f/fn [x] (-> x (nmap (fn [x] (-> (round-timestamp (._1 x) min-agg) (ft/tuple (._2 x))))))))))
 
+(defn parallelize-with-sc
+  [ ts ]
+    (f/parallelize sc ts))
+
+(defn slice-by-from-to
+  [ ts from to ]
+  (-> ts
+      parallelize-with-sc
+      (f/filter (f/fn [x] (and (-> x :timestamp (> from)) (-> x :timestamp (< to)))))))
+
+(defn tuple-arr-to-net-tuple
+  [ stamp today tomm  ]
+    (ft/tuple stamp (ft/tuple today tomm))) 
+
+(defn unpack-and-to-net-tuple-arr
+  [x]
+  (let [ stamps (-> x ft2 (nmap ft1) take-rhead)  
+         today (-> x ft2 (nmap ft2) take-rtail) 
+         tomm (-> x ft2 (nmap ft2) take-rhead) ] 
+    (ft/tuple (ft1 x) (map tuple-arr-to-net-tuple stamps today tomm))))
+
+(defn tuple-apply
+  [ tuple f ] 
+    (apply f [ (ft1 tuple) (ft2 tuple) ] ))
+
+(defn fold-net-tuple
+  [ t-vv-stuple ]
+  (-> t-vv-stuple
+      ft1
+      (ft/tuple (tuple-apply (ft2 t-vv-stuple) net))))
+
+(defn into-ts-net-tuple
+  [ ts ]
+    (-> ts 
+        f/group-by-key
+        (f/map-to-pair (f/fn [x] (unpack-and-to-net-tuple-arr x)))))
+
+(defn timestamp-to-opstamp
+  [ stamp sym agg-min ]
+    (->> (-> stamp 
+          (round-timestamp agg-min))
+         (codify-opstamp sym)))
+
+(timestamp-to-opstamp 1023000000 100 5)
+
+(defn fold-ts-net-tuple
+  [ ts ]
+    (-> ts
+        (f/map-to-pair (f/fn [x] (ft/tuple (ft1 x) (->> x ft2 (map fold-net-tuple)))))))
+
+        ;(f/map-to-pair (f/fn [x] (ft/tuple (ft1 x) (-> x ft2 (nmap (fn [x] (net (ft1 x) (ft2 x)))))
 
 (def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
 
-(def tt (se/load-sym-ts "BTC" 1))
-
+(def tt (se/load-ts 1))
 (def ttt (take 30 tt))
-(def kt (load-ts-net ttt 10))
+
+(def from-tsp
+  (->> ttt
+       (sort-by :timestamp)
+       first 
+       :timestamp))
+
+(def to-tsp (->> ttt
+    (sort-by :timestamp)
+    last
+    :timestamp))
+
+(def g (-> s f/group-by-key))
+
+(def sts (slice-by-from-to tt from-tsp to-tsp))
+
+(def s (extract-to-tuple-rdd sts))
+
+(f/first sts)
+(f/count sts)
+
+(-> sts
+(f/map-to-pair (f/fn [x] (ft/tuple (:code x) (:timestamp x))))
+f/first)
+
+(-> sts
+    extract-to-tuple-rdd 
+    f/first)
+
+(-> tt
+    (slice-by-from-to from-tsp to-tsp)
+    (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
+    extract-to-tuple-rdd 
+    into-ts-net-f
+    fold-ts-net-tuple
+    f/first)
+
+(def stt (filter (fn [x] (< (:timestamp x) tsp-dot )) tt))
+
+(println stt)
+
+(def kt (into-ts-net sts))
 
 (first (sort-by :timestamp tt))
 
-(def fff (load-ts-net (take 100 tt)))
-(f/take kt 10)
+(def fff (into-ts-net stt))
+
+(-> fff
+    (f/map-to-pair (f/fn [x] (ft/tuple (._1 x) (-> x (._2) (nmap (fn [x] (._2 x))) (nreduce +) ))))
+    f/collect)
+
 
 (def test-set [ {:timestamp 0 :tradePrice 100} {:timestamp 1 :tradePrice 90} {:timestamp 2 :tradePrice 110} {:timestamp 3 :tradePrice 120} {:timestamp 4 :tradePrice 150} ])
 (def tk (net-from-sorted-dict test-set))

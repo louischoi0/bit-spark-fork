@@ -35,6 +35,12 @@
   [ tick ]
     (mc/find-maps db coll {:unit tick}))
 
+(defn load-ts-from-to
+  [ tick from to ]
+    (mc/find-maps db coll {"$and" [ {:unit tick}  { "$and" [ {:timestamp {"$lte" to} } {:timestamp {"$gte" from}} ] } ] } ))
+
+(load-ts-from-to 1 1000 100000000000)
+
 (defn conv-ts-map-to-tuple
   [ ts ]
     (map (fn [x] (ft/tuple (:timestamp x) (ft/tuple (:tradePrice x) (:code x)))) ts ))
@@ -51,4 +57,4 @@
          (f/parallelize-pairs sc)))
 
 ;(load-ts "BTC" 10)
-
+a0204060
