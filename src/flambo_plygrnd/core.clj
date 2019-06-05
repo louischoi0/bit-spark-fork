@@ -9,6 +9,8 @@
             [flambo-plygrnd.sqlexecutor :as se]
             [flambo-plygrnd.utils :as u :refer :all]
 
+            [clojure.set :as set]
+
             [clj-time.coerce :as c]
             [clj-time.core :as t]
 
@@ -196,13 +198,13 @@
 
 (defn tuple-apply
   [ tuple f ] 
-    (apply f [ (ft1 tuple) (ft2 tuple) ] ))
+    (f (ft1 tuple) (ft2 tuple)))
 
 (defn fold-net-tuple
   [ t-vv-stuple ]
-  (-> t-vv-stuple
-      ft1
-      (ft/tuple (tuple-apply (ft2 t-vv-stuple) net))))
+    (-> t-vv-stuple
+        ft1
+        (ft/tuple (tuple-apply (ft2 t-vv-stuple) net))))
 
 (defn into-ts-net-tuple
   [ ts ]
@@ -212,18 +214,47 @@
 
 (defn timestamp-to-opstamp
   [ stamp sym agg-min ]
-    (->> (-> stamp 
-          (round-timestamp agg-min))
-         (codify-opstamp sym)))
-
-(timestamp-to-opstamp 1023000000 100 5)
+    (-> stamp 
+        (round-timestamp agg-min)
+        (codify-opstamp sym)))
 
 (defn fold-ts-net-tuple
   [ ts ]
     (-> ts
         (f/map-to-pair (f/fn [x] (ft/tuple (ft1 x) (->> x ft2 (map fold-net-tuple)))))))
-
         ;(f/map-to-pair (f/fn [x] (ft/tuple (ft1 x) (-> x ft2 (nmap (fn [x] (net (ft1 x) (ft2 x)))))
+
+(defn nmap2
+  [ x y f ]
+    (map f x y))
+
+(defn unpack-ts-net-tuple-and-agg
+  [ ts agg-min ]
+    (-> ts 
+        (f/reduce-by-key (f/fn [x] (let [ code (-> x ft1) ] 
+                                     (-> x ft2 (nmap ft1) 
+                                         (nmap (fn [x] (timestamp-to-opstamp x code agg-min))) 
+                                         (nmap2 (-> x ft2 (nmap ft2)) ft/tuple)))))
+        f/collect 
+        (nreduce concat)))
+
+(defn max-net-in-group
+  [ ts ]
+    (-> ts
+        (f/reduce-by-key (f/fn [b,a] (if (> (-> a ft2 ) (ft2 b)) a b)))))
+
+(defn remove-element
+  [ seqq element ]
+    (->> seqq (filter (fn [x] (not (= x element))))))
+
+(defn op2-reverse
+  [ f x y ]
+    (f y x))
+
+(defn rdd-ft1-to-opstamp
+ [ rdd ]
+  (-> rdd
+      (f/map-to-pair (f/fn [x] (-> x ft1 timestamp-to-opstamp (ft/tuple (ft2 x)))))))
 
 (def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
 
@@ -241,50 +272,51 @@
     last
     :timestamp))
 
-(def g (-> s f/group-by-key))
-
-(def sts (slice-by-from-to tt from-tsp to-tsp))
-
-(def s (extract-to-tuple-rdd sts))
-
-(f/first sts)
-(f/count sts)
-
-(-> sts
-(f/map-to-pair (f/fn [x] (ft/tuple (:code x) (:timestamp x))))
-f/first)
-
-(-> sts
-    extract-to-tuple-rdd 
-    f/first)
-
-(-> tt
+(def ss (-> tt
     (slice-by-from-to from-tsp to-tsp)
     (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
     extract-to-tuple-rdd 
-    into-ts-net-f
+    into-ts-net-tuple
     fold-ts-net-tuple
-    f/first)
+    (unpack-ts-net-tuple-and-agg 5)))
 
-(def stt (filter (fn [x] (< (:timestamp x) tsp-dot )) tt))
+    ;first))
+    ;ts-to-pair-rdd-with-sc 
+    ;f/sort-by-key ))
 
-(println stt)
+(-> tt
+    (slice-by-from-to from-tsp to-tsp)
+    f/collect
+    (nmap :code)
+    distinct)
 
-(def kt (into-ts-net sts))
 
-(first (sort-by :timestamp tt))
+(def duplicated-key-list (atom (vector)))
 
-(def fff (into-ts-net stt))
+(-> ss f/collect (nmap ft1) (nreduce (fn [b,n] (if (= b n) (do (println n) (reset! duplicated-key-list (conj @duplicated-key-list n)))) n)))
 
-(-> fff
-    (f/map-to-pair (f/fn [x] (ft/tuple (._1 x) (-> x (._2) (nmap (fn [x] (._2 x))) (nreduce +) ))))
-    f/collect)
+(def ss-col (-> ss f/collect))
+
+(get @duplicated-key-list 0)
+(->> @duplicated-key-list distinct (map (fn [x] (filter (fn [y] (= x (ft1 y))) ss-col))))
+
+(f/first ss)
+
+(def sss (atom (-> ss (nmap ft1))))
+
+(count @sss)
+
+(def distinct-seq (-> ss (nmap ft1) distinct))
+
+(->> distinct-seq (map (fn [x] (do (reset! sss (remove-element @sss x))))))
+
+(println @sss)
+
+(->> ss (map ft1) set (set/difference (-> ss (nmap ft1) set)))
 
 
 (def test-set [ {:timestamp 0 :tradePrice 100} {:timestamp 1 :tradePrice 90} {:timestamp 2 :tradePrice 110} {:timestamp 3 :tradePrice 120} {:timestamp 4 :tradePrice 150} ])
 (def tk (net-from-sorted-dict test-set))
-
-(agg-ts-net kt 5)
 
 (defn sort-by-k
   [ ts k ]
@@ -320,45 +352,3 @@ f/first)
   [ rdd min-agg ]
     (-> rdd
         (map-to-key (f/fn [x] (retrv-timestamp x min-agg)))))
-
-(net 100 120)
-
-(def rts (-> (se/load-sym-ts "BTC" 1) (sort-by-k :timestamp)))
-(def ok (:timestamp (first rts)))
-
-(def ts (load-ts-to-rdd-serr "BTC" 5))
-(def tts (rdd-cumprod-by-key ts))
-
-(f/collect tts)
-
-(def k (rdd-max-by-value tts))
-
-(retrv-timestamp (._1 k) 5)
-
-(f/take tts 5)
-(f/first tts)
-
-(c/from-long (retrv-timestamp (._1 (f/first tts)) 5))
-
-(def rtrv-rdd (rdd-retrv-timestamp tts 5))
-
-(-> rtrv-rdd 
-    (map-to-key (f/fn [x] (c/from-long x)))
-    (f/take 10))
-
-(f/take rtrv-rdd 3)
-
-(-> rts first :candleDateTime)
-
-(->   (f/first ts)
-      (._1 )
-      (retrv-timestamp 5)
-      (c/from-long))
-
-(def otk (-> ts
-             (f/map (f/fn [x] (retrv-timestamp (._1 x) 5)))))
-
-(def f (->> rts 
-       (map :timestamp)
-       (map long) 
-       (map c/from-long)))
