@@ -1,9 +1,31 @@
 (ns flambo-plygrnd.utils
-
+  (:require [flambo.api :as f])
+  (:require [flambo.tuple :as ft])
   (:require [clj-time.core :as t])
-  
   (:require [clj-time.coerce :as c])
   (:require [clj-time.format :as fm]))
+
+(defn map-to-key
+  [ rdd ff ]
+    (-> rdd
+        (f/map-to-pair (f/fn [x] (ft/tuple (ff (._1 x)) (._2 x) ) ))))
+
+(defn map-to-value
+  [ rdd ff ]
+    (-> rdd
+        (f/map-to-pair (f/fn [x] (ft/tuple (._1 x) (ff (._2 x)))))))
+
+(defn ntuple
+  [ ft2 ft1 ]
+    (ft/tuple ft1 ft2))
+
+(defn ** 
+  [ a b ]
+    (Math/pow a b))
+
+(defn sort-by-k
+  [ ts k ]
+    (sort-by k ts))
 
 (defn nreduce
   [ x f ] 
@@ -91,5 +113,33 @@
         (- (c/to-long start-time))
         (/ 1000 (* (unit-dict (keyword unit)) tick))))
 
+(defn make-num-tail-even
+  [ number sur ]
 
+    (let [ off-tcnt (-> number get-tenth-count (- sur)) 
+           sub-mask (** 10 off-tcnt) ]
+
+           (-> (/ number sub-mask) int (* sub-mask))))
+
+(defn retrv-timestamp
+  [ tsp min-agg ]
+    (-> tsp 
+        (make-num-tail-even 3)
+        (- tsp)
+        (* -1)
+        long
+        (* min-agg 60 1000)))
+
+(defn retrv-timestamp-wcode
+  [ tsp min-agg ]
+    (let [ sqcnt (- (get-tenth-count tsp) 3)
+           code (-> tsp (/ (** 10 sqcnt)) int surfix-to-bit-code) ]
+      (-> tsp
+          (retrv-timestamp min-agg)
+          (ntuple code))))
+
+(defn opstamp-to-code
+  [ tsp ] 
+    (let [ sqcnt (-> tsp get-tenth-count (- 3)) ]
+      (-> tsp (/ (** 10 sqcnt)) int surfix-to-bit-code)))
 

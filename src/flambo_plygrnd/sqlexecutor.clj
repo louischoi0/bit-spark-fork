@@ -41,7 +41,6 @@
 
 (def a (load-ts-from-to 1 1000 10000000000000))
 
-(print a)
 
 (defn conv-ts-map-to-tuple
   [ ts ]
@@ -58,4 +57,4 @@
          conv-ts-map-to-tuple
          (f/parallelize-pairs sc)))
 
-;(load-ts "BTC" 10)
+(load-sym-ts "BTC" 10)
