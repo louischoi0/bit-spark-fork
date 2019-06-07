@@ -14,7 +14,7 @@
             [clj-time.coerce :as c]
             [clj-time.core :as t]
 
-            [clojure.string :as s]))
+            [clojure.string :as str]))
   
 (defn ts-to-pair-rdd 
   [ sc ts ]
@@ -34,24 +34,6 @@
     (-> rdd
         (map-to-key (f/fn [x] (retrv-timestamp x min-agg)))))
 
-(defn add-code-num-to-timestamp
-  [ n-sym tsp ] 
-    (->> tsp
-        get-tenth-count
-        (** 10)
-        (* n-sym)
-        (+ tsp)
-        long))
-
-(defn codify-opstamp
-  [ tsp sym ]
-    (-> sym
-        bit-code-to-surfix
-        (add-code-num-to-timestamp tsp)))
-
-(defn round-timestamp
-  [ tsp minutes ]
-    (int (/ tsp (* minutes 60 1000))))
 
 (defn round-rdd-by-min
   [ rdd minutes ]  
@@ -205,11 +187,6 @@
         f/group-by-key
         (f/map-to-pair (f/fn [x] (unpack-and-to-net-tuple-arr x)))))
 
-(defn timestamp-to-opstamp
-  [ stamp sym agg-min ]
-    (-> stamp 
-        (round-timestamp agg-min)
-        (codify-opstamp sym)))
 
 (defn to-opstamp-factory
   [ sym agg-min ]
@@ -247,10 +224,6 @@
 (defn remove-element
   [ seqq element ]
     (->> seqq (filter (fn [x] (not (= x element))))))
-
-(defn op2-reverse
-  [ f x y ]
-    (f y x))
 
 (defn rdd-ft1-to-opstamp
  [ rdd ]
@@ -292,10 +265,9 @@
         (nreduce (fn [x y] (assoc x (-> y first key) (-> y first val))))))
 
 (defn series-rdd-in-time-range-and-sort
-  [ rdd to from ]
+  [ rdd from to]
     (-> rdd
-        (f/filter (f/fn [x] (-> x ft1 (>= from) )))))
-        ;(f/filter (f/fn [x] (-> x ft1 (>= from) (and (< (ft1 x) to)))))))
+        (f/filter (f/fn [x] (-> x ft1 (>= from) (and (< (ft1 x) to)))))))
 
 (defn investigate-series-dict-by-code
   [ series-dict opstamp fnc ]
@@ -305,16 +277,82 @@
           (f/map-to-pair fnc)
           f/sort-by-key)))
 
-(defn offset-slicer-by-opstamp
-  [ ts opstamps min-offset ]
-    (let [ codes (-> opstamps (nmap opstamp-to-code) set)
-           ts-grouped-rdd  (-> ts f/group-by-key) 
+(defn slice-ontuple-series-by-opstamp-offset
+  [ series base-opstamp op-offset op]
+  
+  (assert (or (= op +) (= op -)))
 
-           series-dict-by-code (->  ts 
-                                    (f/filter (f/fn [x] (contains? codes (ft1 x))))
-                                    f/group-by-key
-                                    f/collect
-                                    key-series-to-rdd-map) ]))
+    (let [  op1 (atom <=)
+            op2 (atom >=) 
+
+            swap-func (fn [x] (= x <=) >= <=)
+            op-opstamp (op base-opstamp op-offset) ]
+
+      (if (= op +) (do (swap! op1 swap-func) (swap! op2 swap-func)) nil)
+      (-> series
+          (nfilter (fn [ ontuple ] (-> ontuple ft1 (@op1 base-opstamp) (and (@op2 (ft1 ontuple) op-opstamp))))))))
+
+(defn slice-ontuple-series-by-opstamp-backward
+  [ series to-opstamp op-offset ]
+    (slice-ontuple-series-by-opstamp-offset series to-opstamp op-offset -))
+
+(defn slice-ontuple-series-by-opstamp-forward
+  [ series to-opstamp op-offset ]
+    (slice-ontuple-series-by-opstamp-offset series to-opstamp op-offset +))
+
+(defn timestamp-series-to-opstamp
+  [ ts sym agg-min ]
+    (-> ts
+        (nmap (fn [x] (timestamp-to-opstamp x sym agg-min)))))
+
+(defn timestamp-to-opstamp-and-min-agg-tuple
+  [ timestamp sym min-agg ]
+    (attach-min-agg-to-opstamp (timestamp-to-opstamp timestamp "BTC" min-agg) min-agg))
+
+(defn slice-ontuple-series-by-min-offset
+  [ op-ontuple-series min-offset min-agg ]
+    (let [ opstamp (ft1 op-ontuple-series) ]
+      (-> op-ontuple-series
+          ft2
+          (op2-reverse list apply)
+          ts-to-pair-rdd-with-sc
+          ;(f/filter (f/fn [x] (-> x ft1 (<= opstamp) (and (>= (ft1 x) (subtract-opstamp opstamp (/ min-offset min-agg))))))))))
+          (f/filter (f/fn [x] (-> x ft1 (<= opstamp) ))))))
+
+(defn offset-slicer-by-opstamp
+  [ ts opstamps min-offset min-agg ]
+
+    (warn-function-mal-use  (> min-agg min-offset) "offset-slicer-by-opstamp" "min-agg is larger then min-offset.")
+
+    (let [ code-op-pair (-> opstamps (f/map-to-pair (f/fn [x] (opstamp-to-code-pair x)))) 
+           functor (fn [x] (fn [y z] (timestamp-to-opstamp-and-min-agg-tuple y z x)))
+           f-in-kernel (functor min-agg)
+           hi 10
+
+           ts-grouped-rdd  (-> ts 
+                               (f/map-to-pair (f/fn 
+                                                [x] 
+                                                  (ft/tuple (ft1 x) 
+                                                            (ft/tuple (timestamp-to-opstamp (-> x ft2 ft1) (ft1 x) min-agg) (-> x ft2 ft2)))))
+                               f/group-by-key) ]
+
+      (-> code-op-pair
+          (f/join ts-grouped-rdd)
+          f/collect
+          (nmap ft2))))
+          ;(nmap ts-to-pair-rdd-with-sc))))
+          ;(nmap (fn [x] (f/filter x (f/fn [y] (-> y ft1^
+
+(def tts (-> vs (offset-slicer-by-opstamp signals 30 10) f/first))
+   
+(apply list tts)
+
+(-> (slice-ontuple-series-by-min-offset tts 40 10 ) f/collect)
+
+
+
+
+(-> signals f/first)
 
 (defn exclude-code
   [ ts code ]
@@ -338,52 +376,37 @@
     :timestamp))
 
 (def ts (-> tt (slice-by-from-to from-tsp to-tsp)))
-(def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume")))
+(def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume") f/cache))
+
+(def tsft (-> signals f/first))
+
+(-> tsft println)
+
+(-> ts f/first)
+
+(-> vs f/first)
 
 (def test-input [ (ft/tuple "BTC" [(ft/tuple 1 2) (ft/tuple 3 4)]) (ft/tuple "EOS" [(ft/tuple 5 2)]) (ft/tuple "XRP" [(ft/tuple 8 1)]) ])
 (def test-series-dict (-> (key-series-to-rdd-map test-input)))
 (def test-opstamp 100234)
 
+(def test-ontuple [ (ft/tuple 1001 1) (ft/tuple 1002 1) (ft/tuple 1003 1) (ft/tuple 1004 1) (ft/tuple 1005 1) (ft/tuple 1006 1) ] )
+
 (def k (-> test-series-dict (investigate-series-dict-by-code test-opstamp (f/fn [x] (ft/tuple (+ (ft1 x) test-opstamp ) 1 )))))
 (-> k f/collect)
 
-(-> k (series-rdd-in-time-range-and-sort 0 100238) f/collect)
+(-> k (series-rdd-in-time-range-and-sort 0 100236) f/collect)
+
+(-> signals f/first)
+
+(-> vs f/first)
 
 (print f/first)
-
-(f/first k)
-
-(-> (offset-slicer-by-opstamp vs signals 0) first ft2 first)
-
-(nmap signals opstmap-to-code)
-
-(println opstamp-to-code)
-
-(f/count ts)
-
-(def ss (-> ts 
-    (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
-    (extract-to-tuple-rdd-f "candleAccTradeVolume")
-    into-ts-net-tuple
-    fold-ts-net-tuple
-    (unpack-ts-net-tuple-and-agg 10)))
-
-(-> ss
-    f/collect)
 
 (def signals (-> ts
     (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
     (event-net-change 10 1.02)
-    (f/map (f/fn [x] (-> x ft1)))
-    f/collect))
+    (f/map (f/fn [x] (ft1 x)))))
 
-(first signals)
-
-(-> ss
-    (f/reduce-by-key (f/fn [b a] (* b a)))
-    f/first)
-
-(->> (-> ss 
-    f/count-by-key) (sort-by key))
 
 

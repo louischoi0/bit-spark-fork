@@ -2,8 +2,13 @@
   (:require [flambo.api :as f])
   (:require [flambo.tuple :as ft])
   (:require [clj-time.core :as t])
+  (:require [clojure.string :as str])
   (:require [clj-time.coerce :as c])
   (:require [clj-time.format :as fm]))
+
+(defn op2-reverse
+  [ x y f ]
+    (f y x))
 
 (defn map-to-key
   [ rdd ff ]
@@ -26,6 +31,10 @@
 (defn sort-by-k
   [ ts k ]
     (sort-by k ts))
+
+(defn nfilter
+  [ ts f ]
+    (filter f ts))
 
 (defn nreduce
   [ x f ] 
@@ -121,6 +130,31 @@
 
            (-> (/ number sub-mask) int (* sub-mask))))
 
+(defn add-code-num-to-timestamp
+  [ tsp n-sym ] 
+    (->> tsp
+        get-tenth-count
+        (** 10)
+        (* n-sym)
+        (+ tsp)
+        long))
+
+(defn round-timestamp
+  [ tsp minutes ]
+    (int (/ tsp (* minutes 60 1000))))
+
+(defn codify-opstamp
+  [ tsp sym ]
+    (-> sym
+        bit-code-to-surfix
+        (op2-reverse tsp add-code-num-to-timestamp)))
+
+(defn timestamp-to-opstamp
+  [ stamp sym agg-min ]
+    (-> stamp 
+        (round-timestamp agg-min)
+        (codify-opstamp sym)))
+
 (defn retrv-timestamp
   [ tsp min-agg ]
     (-> tsp 
@@ -130,6 +164,11 @@
         long
         (* min-agg 60 1000)))
 
+(defn timestamp-is-in-time-range
+  [ tsp start end ]
+    (let [ _start (c/to-long start) _end (c/to-long end) ]
+    (and (>= tsp _start) (<= tsp _end))))
+
 (defn retrv-timestamp-wcode
   [ tsp min-agg ]
     (let [ sqcnt (- (get-tenth-count tsp) 3)
@@ -138,8 +177,72 @@
           (retrv-timestamp min-agg)
           (ntuple code))))
 
-(defn opstamp-to-code
+(defn opstamp-to-ncode
   [ tsp ] 
     (let [ sqcnt (-> tsp get-tenth-count (- 3)) ]
-      (-> tsp (/ (** 10 sqcnt)) int surfix-to-bit-code)))
+      (-> tsp (/ (** 10 sqcnt)) int)))
+
+(defn opstamp-to-code
+  [ tsp ] 
+    (-> tsp
+        opstamp-to-ncode
+        surfix-to-bit-code))  
+
+(defn opstamp-to-code-pair
+  [ opstamp ]
+    (-> opstamp
+        opstamp-to-code
+        (ft/tuple opstamp)))
+
+(defn get-rid-of-code-to-opstamp
+  [ opstamp ]
+    (->>  opstamp 
+          get-tenth-count
+          (- 1)
+          (* -1)
+          (** 10) 
+          (mod opstamp)
+          int))
+      
+(defn operation-opstamp
+  [ opstamp msc op ]
+    (let [ ncode (opstamp-to-ncode opstamp) ]
+      (-> opstamp
+          get-rid-of-code-to-opstamp
+          (op msc)
+          (add-code-num-to-timestamp ncode))))
+
+(defn subtract-opstamp
+  [ opstamp msc ]
+    (operation-opstamp opstamp msc -))
+
+(defn add-opstamp
+  [ opstamp msc ]
+    (operation-opstamp opstamp msc +))
+
+(defn subtract-opstamp-by-min-unit
+  [ opstamp minutes min-agg ]
+    (let [ _msc (-> minutes (/ min-agg) int) ]
+      (subtract-opstamp opstamp _msc)))
+
+(defn warning
+  [ form v ]
+    (let [ replace-token "{}" ]
+      (-> form 
+          (str {})
+          (str/replace #"\{}" v)
+          println)))
+
+;TODO
+;(defn format-py
+;  [ s &v ]
+;    ( 
+
+(defn warn-function-mal-use
+  [ condition function_name info ]
+    (if condition 
+      (do
+        (let [ form (str/replace "Warning : {} Function mal-use detected. \n" #"\{}" function_name) ]
+          (-> form 
+              (warning info))))))
 
