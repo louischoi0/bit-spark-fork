@@ -198,7 +198,7 @@
   [ opstamp ]
     (->>  opstamp 
           get-tenth-count
-          (- 1)
+          (- 3)
           (* -1)
           (** 10) 
           (mod opstamp)
@@ -232,6 +232,12 @@
           (str {})
           (str/replace #"\{}" v)
           println)))
+
+(defn pr2 
+  [ v1 v2 ]
+    (do 
+      (println v1)
+      (println v2)))
 
 ;TODO
 ;(defn format-py
