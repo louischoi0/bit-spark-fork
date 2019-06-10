@@ -6,6 +6,14 @@
   (:require [clj-time.coerce :as c])
   (:require [clj-time.format :as fm]))
 
+(defn nmap
+  [ x f ]
+    (map f x))
+
+(defn print-recur 
+  [ x ]
+    (do (print x) x))
+
 (defn op2-reverse
   [ x y f ]
     (f y x))
@@ -97,9 +105,16 @@
 (def unit-dict {:minutes 60 :hours (* 60 60) :day (* 60 60 24) })
 
 (def req-dt-fmt (fm/formatter "YYYY-MM-dd HH:mm:ss"))
+(def input-dt-fmt (fm/formatter "YYYYMMdd"))
 
 (defn strftime [x] (fm/unparse req-dt-fmt x))
 (defn timefstr [x] (if (nil? x) nil (fm/parse req-dt-fmt x)))
+
+(defn timestamp-from-input-format-str
+  [ input-str ]
+    (-> input-dt-fmt
+        (fm/parse input-str)
+        c/to-long))
 
 (defn get-target-time
   [ target-time unit tick cnt op]
@@ -232,6 +247,35 @@
           (str {})
           (str/replace #"\{}" v)
           println)))
+
+(defn reverse-tuple
+  [ tp ]
+    (ft/tuple (ft2 tp) (ft1 tp)))
+
+(defn opstamp-to-range-tuple
+  [ opstamp unit op ]
+    (assert (or (= op -) (= op +)))
+    (let [ rtuple (ft/tuple (operation-opstamp opstamp unit op) opstamp) ]
+      (if (= op -) rtuple (reverse-tuple rtuple))))  
+
+(defn assert-map
+  [ series op-f ]
+   (-> series 
+       (nmap op-f)
+       (nmap (fn [x] (assert x))))
+   "ok") 
+
+(defn opstamp-series-to-range-tuple-series
+  [ opstamps unit op ]
+    (-> opstamps
+        (nmap (fn [x] (opstamp-to-range-tuple x unit op)))))
+
+(defn opstamp-is-in-range?
+
+  [ opstamp rtuple ]
+    (-> opstamp
+        (>= (ft1 rtuple))
+        (and (<= opstamp (ft2 rtuple)))))
 
 (defn pr2 
   [ v1 v2 ]

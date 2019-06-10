@@ -27,7 +27,13 @@
 
 ;(def sc spark-context-instance)
 
-(def ts-to-pair-rdd-with-sc (fn [x] (ts-to-pair-rdd sc x)))
+(defn ts-to-pair-rdd-with-sc 
+  [x] 
+    (ts-to-pair-rdd sc x))
+
+(defn parallelize-with-sc
+  [ ts ]
+    (f/parallelize sc ts))
 
 (defn rdd-retrv-timestamp
   [ rdd min-agg ]
@@ -100,14 +106,6 @@
         (f/map-to-pair (f/fn [x] (-> x ._2 :code bit-code-to-surfix (add-code-num-to-timestamp (._1 x)) (ft/tuple (-> x ._2 :tradePrice)))))
         f/sort-by-key)))
 
-(defn nmap
-  [ x f ]
-    (map f x))
-
-(defn print-recur 
-  [ x ]
-    (do (print x) x))
-
 (defn net-from-sorted-dict
   [ ts ]
     (let [ prices (map :tradePrice ts) 
@@ -145,10 +143,6 @@
   [ ts-net-rdd min-agg ]
     (-> ts-net-rdd
         (f/reduce-by-key (f/fn [x] (-> x (nmap (fn [x] (-> (round-timestamp (._1 x) min-agg) (ft/tuple (._2 x))))))))))
-
-(defn parallelize-with-sc
-  [ ts ]
-    (f/parallelize sc ts))
 
 (defn slice-by-from-to
   [ ts from to ]
@@ -336,19 +330,35 @@
           f/collect
           (nmap ft2)
           (nmap (fn [x] (ft/tuple (ft1 x) (slice-ontuple-series-by-min-offset x op-offset)))))))
-          ;(nmap (fn [ op-value ] (let [ op (ft1 op-value) values (ft2 op-value) ] (ft/tuple op (slice-ontuple-series-by-min-offset values op-offset)))))))) 
 
+(defn check-valid-offset-slicer-by-opstamp
+  [ tts signals min-offset min-agg  ]
+    (let [ unit (-> min-offset (/ min-agg) int) 
+
+           tuples (-> tts (nmap ft2)) 
+
+           opstamps (-> tts (nmap ft1)) 
+           ranges (-> opstamps (opstamp-series-to-range-tuple-series unit -)) 
+
+           chk-rdd  (nmap2 tuples ranges 
+                       (fn [fts r] 
+                         (-> fts
+                             (f/filter (f/fn [x] (not (opstamp-is-in-range? (ft1 x) r))))
+                             f/count))) ]
+
+     (-> chk-rdd
+         (assert-map (fn [x] (= x 0))))))
 
 (defn exclude-code
   [ ts code ]
     (-> ts
         (f/filter (f/fn [x] (-> x :code (= code) not)))))
 
-(def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
-
+;(def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
+;
 (def tt (se/load-ts 1))
 (def ttt (take 1000 tt))
-
+;
 (def from-tsp
   (->> ttt
        (sort-by :timestamp)
@@ -359,25 +369,27 @@
     (sort-by :timestamp)
     last
     :timestamp))
+;
 
-(def ts (-> tt (slice-by-from-to from-tsp to-tsp)))
-(def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume") f/cache))
+;(def ts (-> tt (slice-by-from-to from-tsp to-tsp)))
 
-(def signals (-> ts
-    (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
-    (event-net-change 10 1.02)
-    (f/map (f/fn [x] (ft1 x)))))
+;(def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume") f/cache))
+;
+;(def signals (-> ts
+;    (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
+;    (event-net-change 10 1.02)
+;    (f/map (f/fn [x] (ft1 x)))))
+;
+;(def tsft (-> signals f/first))
 
-(def tsft (-> signals f/first))
-(def tts (-> vs (offset-slicer-by-opstamp signals 0 10) f/first ))
-
-(-> tts (slice-ontuple-series-by-min-offset 40 10) f/count)
-(-> vs (offset-slicer-by-opstamp signals 40 10) f/first) 
-
-
-
-
-
-
-
-
+;(def tts (-> vs (offset-slicer-by-opstamp signals 40 10))  )
+;
+;(-> tts f/first ft2 f/first)
+;(-> tts f/first ft1)
+;       
+;(check-valid-offset-slicer-by-opstamp tts signals 40 10)
+;
+;(-> tts (slice-ontuple-series-by-min-offset 4))
+;(-> vs (offset-slicer-by-opstamp signals 40 10)
+;
+;
