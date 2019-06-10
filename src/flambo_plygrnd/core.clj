@@ -294,7 +294,7 @@
   [ series to-opstamp op-offset ]
     (slice-ontuple-series-by-opstamp-offset series to-opstamp op-offset +))
 
-(defn slice-ontuple-series-by-min-offset
+(defn slice-ontuple-series-by-op-offset
   [ op-ontuple-series op-offset ]
     (let [ opstamp (ft1 op-ontuple-series) ]
       (-> op-ontuple-series
@@ -303,7 +303,6 @@
           ts-to-pair-rdd-with-sc
 
           (f/filter (f/fn [x] (let [ to opstamp from (subtract-opstamp opstamp op-offset) ]
-                                (println "hiroo")
                                 (do (println opstamp) (println from) (println to))
                                 (and (>= (ft1 x) from) (<= (ft1 x) to))))))))
 
@@ -311,48 +310,16 @@
   [ tuple-series ]
     (ft/tuple (map ft1 tuple-series) (map ft2 tuple-series)))
 
-(defn offset-slicer-by-opstamp
-  [ ts opstamps min-offset min-agg ]
-
-    (warn-function-mal-use  (> min-agg min-offset) "offset-slicer-by-opstamp" "min-agg is larger then min-offset.")
-
-    (let [ code-op-pair (-> opstamps (f/map-to-pair (f/fn [x] (opstamp-to-code-pair x)))) 
-           op-offset (/ min-offset min-agg)
-           ts-grouped-rdd  (-> ts 
-                               (f/map-to-pair (f/fn 
-                                                [x] 
-                                                  (ft/tuple (ft1 x) 
-                                                            (ft/tuple (timestamp-to-opstamp (-> x ft2 ft1) (ft1 x) min-agg) (-> x ft2 ft2)))))
-                               f/group-by-key) ]
-
-      (-> code-op-pair
-          (f/join ts-grouped-rdd)
-          f/collect
-          (nmap ft2)
-          (nmap (fn [x] (ft/tuple (ft1 x) (slice-ontuple-series-by-min-offset x op-offset)))))))
-
-(defn check-valid-offset-slicer-by-opstamp
-  [ tts signals min-offset min-agg  ]
-    (let [ unit (-> min-offset (/ min-agg) int) 
-
-           tuples (-> tts (nmap ft2)) 
-
-           opstamps (-> tts (nmap ft1)) 
-           ranges (-> opstamps (opstamp-series-to-range-tuple-series unit -)) 
-
-           chk-rdd  (nmap2 tuples ranges 
-                       (fn [fts r] 
-                         (-> fts
-                             (f/filter (f/fn [x] (not (opstamp-is-in-range? (ft1 x) r))))
-                             f/count))) ]
-
-     (-> chk-rdd
-         (assert-map (fn [x] (= x 0))))))
-
 (defn exclude-code
   [ ts code ]
     (-> ts
         (f/filter (f/fn [x] (-> x :code (= code) not)))))
+
+(defn ft21-to-opstamp
+  [ rdd ]
+    (-> rdd 
+        (f/map-to-pair (f/fn [x] (let [ opstamp (-> x ft2 ft1 (timestamp-to-opstamp (ft1 x) 10)) ]
+                         (ft/tuple opstamp (ft22 x)))))))
 
 ;(def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
 ;
@@ -371,25 +338,111 @@
     :timestamp))
 ;
 
-;(def ts (-> tt (slice-by-from-to from-tsp to-tsp)))
+(defn rdd-min
+  ;TODO reduce -> (f/min comparator)
+  ;Now i don`t know how.
+  ([ rdd ]
+    (-> rdd
+        (f/reduce (f/fn [b a] (if (< a b) a b)))))
 
-;(def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume") f/cache))
+  ([ rdd target-f ] 
+    (-> rdd
+        (f/reduce (f/fn [b a] (if (< (target-f a) (target-f b)) a b))))))
+
+(defn do-escalate-series
+  [ series op-offset f ]
+    (-> series
+        f/first))
+
+(defn fold-by-opstamp
+  [ rdd f ]
+    (-> rdd
+        (f/reduce-by-key (f/fn [b a] (f b a)))))
+
+(defn fold-everage
+  [ rdd ]
+  ; (opstamp , V) series rdd everage action.
+    (-> rdd
+        f/group-by-key
+        (f/map-to-pair (f/fn [x] (ft/tuple (ft1 x) (/ (reduce + (ft2 x)) (count (ft2 x))))))))
+
+(defn slice-ontuple-series
+  [ opstamp ontuple-series-rdd op-unit ]
+    ;Ontuple-series has array of ( opstamp , value ) tuple rdd.
+    (-> ontuple-series-rdd 
+        (f/filter (f/fn [x] (opstamp-is-in-range-b? (ft1 x) opstamp op-unit)))))
+
+(defn get-range-series-by-signals-with-op-offset
+  ; csv must not be folded.
+  [ signals cvs op-offset ]
+    (let [ c (-> cvs f/collect) ]
+      (-> signals 
+          (f/map-to-pair 
+            (f/fn 
+              [v] 
+               (->> c
+                    (filter (fn [x] (opstamp-is-in-range-b? (ft1 x) v op-offset)))
+                    (ft/tuple v)))))))
+
+(def ts (-> tt (slice-by-from-to from-tsp to-tsp)))
+(def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume") f/cache))
+(def cvs (-> vs ft21-to-opstamp))
+
+(-> signals 
+    (get-range-series-by-signals-with-op-offset cvs 3)
+    f/first
+    ft2
+    count)
+
+(-> cvs
+    f/first)
+
+;(slice-ontuple-series (first signals) cvs 10)
+
+(-> vs
+    f/first)
+
+(-> signals
+    f/first 
+    (slice-ontuple-series cvs 1)
+    f/collect
+    count)
+
+    ;f/first) 
+
+    ;(rdd-min vs (f/fn [x] (-> x ft2 ft1)))
+
+(-> vs
+    (f/map-to-pair (f/fn [x] (let [ opstamp (-> x ft2 ft1 (timestamp-to-opstamp (ft1 x) 10)) ]
+                      (ft/tuple (ft1 x ) (ft/tuple opstamp (ft2 x))))))
+
+    (rdd-min (f/fn [x] (-> x ft2 ft1))))
+
+(-> vs
+    (f/map-to-pair (f/fn [x] (let [ opstamp (-> x ft2 ft1 (timestamp-to-opstamp (ft1 x) 10)) ]
+                      (ft/tuple (ft1 x ) (ft/tuple opstamp (ft2 x))))))
+
+    (f/map-to-pair (f/fn [x] (ft2 x)))
+    f/sort-by-key
+    f/collect
+    (op2-reverse 10 take))
+
+
 ;
-;(def signals (-> ts
-;    (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
-;    (event-net-change 10 1.02)
-;    (f/map (f/fn [x] (ft1 x)))))
+(def signals (-> ts
+    (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
+    (event-net-change 10 1.02)
+    (f/map (f/fn [x] (ft1 x)))))
 ;
 ;(def tsft (-> signals f/first))
-
-;(def tts (-> vs (offset-slicer-by-opstamp signals 40 10))  )
 ;
 ;(-> tts f/first ft2 f/first)
 ;(-> tts f/first ft1)
 ;       
-;(check-valid-offset-slicer-by-opstamp tts signals 40 10)
 ;
-;(-> tts (slice-ontuple-series-by-min-offset 4))
-;(-> vs (offset-slicer-by-opstamp signals 40 10)
-;
-;
+;(-> tts (slice-ontuple-series-by-op-offset 4))
+
+
+
+
+

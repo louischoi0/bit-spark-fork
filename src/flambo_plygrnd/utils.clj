@@ -6,13 +6,18 @@
   (:require [clj-time.coerce :as c])
   (:require [clj-time.format :as fm]))
 
+(defn average [coll] 
+  (/ (reduce + coll) (count coll)))
+
 (defn nmap
   [ x f ]
     (map f x))
 
 (defn print-recur 
-  [ x ]
+  ([ x ]
     (do (print x) x))
+  ([ x target-f ]
+    (do (println (target-f)) x)))
 
 (defn op2-reverse
   [ x y f ]
@@ -55,6 +60,30 @@
 (defn ft1
   [ x ]
     (._1 x))
+
+(defn ft22
+  [ x ]
+    (-> x
+        ft2
+        ft2))
+
+(defn ft11
+  [ x ]
+    (-> x
+        ft1
+        ft1))
+
+(defn ft12
+  [ x ]
+    (-> x
+        ft1
+        ft2))
+
+(defn ft21
+  [ x ]
+    (-> x
+        ft2
+        ft1))
 
 (defn bit-code-to-surfix
   [ code ]
@@ -271,11 +300,16 @@
         (nmap (fn [x] (opstamp-to-range-tuple x unit op)))))
 
 (defn opstamp-is-in-range?
-
   [ opstamp rtuple ]
     (-> opstamp
         (>= (ft1 rtuple))
         (and (<= opstamp (ft2 rtuple)))))
+
+(defn opstamp-is-in-range-b?
+  [ opstamp to op-offset ]
+    (-> to 
+        (opstamp-to-range-tuple op-offset -)
+        (op2-reverse opstamp opstamp-is-in-range?))) 
 
 (defn pr2 
   [ v1 v2 ]

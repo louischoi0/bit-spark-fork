@@ -9,7 +9,8 @@
 
   ;had to be done
   :aot [flambo-plygrnd.core] 
-  :main flambo-plygrnd.context
+  ;:main flambo-plygrnd.context
+  :main flambo-plygrnd.core
 
   :profiles {:provided
              {:dependencies
