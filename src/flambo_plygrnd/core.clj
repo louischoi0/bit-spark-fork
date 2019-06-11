@@ -15,7 +15,7 @@
             [clj-time.core :as t]
 
             [clojure.string :as str]))
-  
+
 (defn ts-to-pair-rdd 
   [ sc ts ]
     (->> ts
@@ -321,23 +321,6 @@
         (f/map-to-pair (f/fn [x] (let [ opstamp (-> x ft2 ft1 (timestamp-to-opstamp (ft1 x) 10)) ]
                          (ft/tuple opstamp (ft22 x)))))))
 
-;(def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
-;
-(def tt (se/load-ts 1))
-(def ttt (take 1000 tt))
-;
-(def from-tsp
-  (->> ttt
-       (sort-by :timestamp)
-       first 
-       :timestamp))
-
-(def to-tsp (->> ttt
-    (sort-by :timestamp)
-    last
-    :timestamp))
-;
-
 (defn rdd-min
   ;TODO reduce -> (f/min comparator)
   ;Now i don`t know how.
@@ -365,6 +348,23 @@
     (-> rdd
         f/group-by-key
         (f/map-to-pair (f/fn [x] (ft/tuple (ft1 x) (/ (reduce + (ft2 x)) (count (ft2 x))))))))
+;(def x (ft/tuple 1234 {:code "BTC" :tradePrice 1000}))
+;
+
+(def tt (se/load-ts 1))
+(def ttt (take 1000 tt))
+;
+(def from-tsp
+  (->> ttt
+       (sort-by :timestamp)
+       first 
+       :timestamp))
+
+(def to-tsp (->> ttt
+    (sort-by :timestamp)
+    last
+    :timestamp))
+;
 
 (defn slice-ontuple-series
   [ opstamp ontuple-series-rdd op-unit ]
@@ -388,29 +388,27 @@
 (def vs (-> ts (exclude-code "XRP") (extract-to-tuple-rdd-f "candleAccTradeVolume") f/cache))
 (def cvs (-> vs ft21-to-opstamp))
 
-(-> signals 
-    (get-range-series-by-signals-with-op-offset cvs 3)
-    f/first
-    ft2
-    count)
+(-> ts f/first)
+(-> vs f/first)
 
-(-> cvs
-    f/first)
+;(-> signals 
+    ;(get-range-series-by-signals-with-op-offset cvs 3)
+    ;f/first
+    ;ft2
+    ;count)
+;
 
+;(-> cvs
+    ;f/first)
+;
 ;(slice-ontuple-series (first signals) cvs 10)
 
-(-> vs
-    f/first)
+;(-> vs
+    ;f/first)
 
-(-> signals
-    f/first 
-    (slice-ontuple-series cvs 1)
-    f/collect
-    count)
-
-    ;f/first) 
-
-    ;(rdd-min vs (f/fn [x] (-> x ft2 ft1)))
+;(-> signals
+;    f/first 
+;    (slice-ontuple-series cvs 1)
 
 (-> vs
     (f/map-to-pair (f/fn [x] (let [ opstamp (-> x ft2 ft1 (timestamp-to-opstamp (ft1 x) 10)) ]
@@ -428,7 +426,6 @@
     (op2-reverse 10 take))
 
 
-;
 (def signals (-> ts
     (f/filter (f/fn [x] (-> x :code (= "XRP") not )))
     (event-net-change 10 1.02)

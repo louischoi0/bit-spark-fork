@@ -10,7 +10,7 @@
   ;had to be done
   :aot [flambo-plygrnd.core] 
   ;:main flambo-plygrnd.context
-  :main flambo-plygrnd.core
+  :main flambo-plygrnd.actionunit
 
   :profiles {:provided
              {:dependencies
